@@ -1,0 +1,1044 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KaraokeFlow — Auto-Tune Mixer</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #080a0f;
+    --panel: #0d1117;
+    --border: #1e2530;
+    --accent: #00ffe1;
+    --accent2: #ff2d6b;
+    --accent3: #ffe600;
+    --green: #00ff7f;
+    --yellow: #ffe600;
+    --red: #ff2d6b;
+    --text: #c8d6e5;
+    --dim: #4a5568;
+    --purple: #b066ff;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+  body::before {
+    content:'';
+    position:fixed; inset:0;
+    background: repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.07) 2px,rgba(0,0,0,0.07) 4px);
+    pointer-events:none; z-index:999;
+  }
+  header {
+    display:flex; align-items:center; justify-content:space-between;
+    padding:14px 28px; border-bottom:1px solid var(--border);
+    background:var(--panel);
+  }
+  header h1 {
+    font-family:'Bebas Neue',sans-serif; font-size:1.8rem;
+    letter-spacing:4px; color:var(--accent);
+    text-shadow:0 0 20px rgba(0,255,225,0.4);
+  }
+  .status-pill { display:flex; align-items:center; gap:8px; font-size:0.65rem; letter-spacing:2px; text-transform:uppercase; color:var(--dim); }
+  .dot { width:8px; height:8px; border-radius:50%; background:var(--dim); transition:all 0.3s; }
+  .dot.live { background:var(--red); box-shadow:0 0 10px var(--red); animation:pulse 1s infinite; }
+  .dot.ready { background:var(--green); box-shadow:0 0 10px var(--green); }
+  .dot.tuning { background:var(--purple); box-shadow:0 0 10px var(--purple); animation:pulse 0.5s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  .layout {
+    display:grid;
+    grid-template-columns: 260px 1fr 220px;
+    gap:12px;
+    padding:16px 20px;
+    max-width:1200px;
+    margin:0 auto;
+  }
+
+  /* LEFT: Mic + Pitch Panel */
+  .left-col { display:flex; flex-direction:column; gap:12px; }
+
+  /* CENTER: Pitch Display + Output */
+  .center-col { display:flex; flex-direction:column; gap:12px; }
+
+  /* RIGHT: Music + Controls */
+  .right-col { display:flex; flex-direction:column; gap:12px; }
+
+  .panel {
+    background:var(--panel);
+    border:1px solid var(--border);
+    border-radius:4px;
+    padding:16px;
+  }
+
+  .panel-title {
+    font-family:'Bebas Neue',sans-serif;
+    font-size:0.95rem; letter-spacing:3px;
+    margin-bottom:12px;
+  }
+  .panel-title.mic { color:var(--accent2); }
+  .panel-title.music { color:var(--accent); }
+  .panel-title.tune { color:var(--purple); }
+  .panel-title.output { color:var(--accent3); }
+
+  /* VU Meter vertical */
+  .vu-v { display:flex; gap:3px; height:160px; align-items:flex-end; }
+  .vu-bar-wrap { display:flex; flex-direction:column-reverse; gap:2px; width:14px; height:100%; }
+  .vu-seg { width:100%; height:5px; border-radius:1px; background:var(--border); }
+
+  /* Horizontal meter */
+  .vu-h-row { display:flex; gap:2px; height:12px; }
+  .vu-h-seg { flex:1; height:100%; border-radius:1px; background:var(--border); }
+
+  /* Fader */
+  .fader-row { display:flex; flex-direction:column; gap:6px; }
+  .fader-label { font-size:0.6rem; letter-spacing:1px; color:var(--dim); text-transform:uppercase; }
+  input[type=range] {
+    -webkit-appearance:none; appearance:none;
+    width:100%; height:3px; background:var(--border);
+    border-radius:2px; outline:none; cursor:pointer;
+  }
+  input[type=range].sl-mic::-webkit-slider-thumb { -webkit-appearance:none; width:14px; height:24px; background:var(--accent2); border-radius:3px; box-shadow:0 0 8px rgba(255,45,107,0.5); }
+  input[type=range].sl-music::-webkit-slider-thumb { -webkit-appearance:none; width:14px; height:24px; background:var(--accent); border-radius:3px; box-shadow:0 0 8px rgba(0,255,225,0.5); }
+  input[type=range].sl-master::-webkit-slider-thumb { -webkit-appearance:none; width:14px; height:24px; background:var(--accent3); border-radius:3px; box-shadow:0 0 8px rgba(255,230,0,0.5); }
+  input[type=range].sl-tune::-webkit-slider-thumb { -webkit-appearance:none; width:14px; height:24px; background:var(--purple); border-radius:3px; box-shadow:0 0 8px rgba(176,102,255,0.5); }
+
+  .db-box {
+    font-size:0.75rem; letter-spacing:1px;
+    padding:3px 8px; background:#000;
+    border:1px solid var(--border); border-radius:2px;
+    text-align:center; min-width:72px;
+  }
+
+  /* Big note display */
+  .note-display {
+    background:#000;
+    border:1px solid var(--border);
+    border-radius:4px;
+    padding:20px 16px;
+    text-align:center;
+    position:relative;
+    overflow:hidden;
+  }
+  .note-name {
+    font-family:'Bebas Neue',sans-serif;
+    font-size:5rem;
+    line-height:1;
+    color:var(--purple);
+    text-shadow:0 0 40px rgba(176,102,255,0.5);
+    transition:color 0.1s;
+    letter-spacing:4px;
+  }
+  .note-name.in-tune { color:var(--green); text-shadow:0 0 40px rgba(0,255,127,0.6); }
+  .note-name.sharp { color:var(--accent3); text-shadow:0 0 30px rgba(255,230,0,0.5); }
+  .note-name.flat { color:var(--accent); text-shadow:0 0 30px rgba(0,255,225,0.5); }
+
+  .note-freq {
+    font-size:0.7rem; letter-spacing:2px; color:var(--dim);
+    margin-top:4px;
+  }
+  .note-octave {
+    font-size:0.6rem; letter-spacing:1px; color:var(--dim);
+  }
+
+  /* Tuning needle */
+  .tuning-meter {
+    margin-top:12px;
+    position:relative;
+    height:28px;
+  }
+  .tuning-track {
+    width:100%; height:4px;
+    background:var(--border);
+    border-radius:2px;
+    position:relative;
+    top:12px;
+  }
+  .tuning-center {
+    position:absolute; left:50%; top:0;
+    width:2px; height:100%;
+    background:var(--dim);
+    transform:translateX(-50%);
+  }
+  .tuning-needle {
+    position:absolute; top:-8px;
+    width:3px; height:20px;
+    background:var(--purple);
+    border-radius:2px;
+    transform:translateX(-50%);
+    transition:left 0.08s ease-out, background 0.1s;
+    box-shadow:0 0 8px var(--purple);
+    left:50%;
+  }
+  .tuning-needle.in-tune { background:var(--green); box-shadow:0 0 10px var(--green); }
+  .tuning-needle.sharp { background:var(--accent3); box-shadow:0 0 8px var(--accent3); }
+  .tuning-needle.flat { background:var(--accent); box-shadow:0 0 8px var(--accent); }
+  .tuning-labels {
+    display:flex; justify-content:space-between;
+    font-size:0.5rem; color:var(--dim); margin-top:2px;
+    letter-spacing:1px;
+  }
+
+  /* Cents deviation */
+  .cents-box {
+    font-size:0.75rem; letter-spacing:1px; margin-top:8px;
+    color:var(--dim);
+  }
+
+  /* Chromatic keyboard strip */
+  .keyboard-strip {
+    display:flex; gap:2px; margin-top:10px; height:32px; align-items:flex-end;
+  }
+  .key-cell {
+    flex:1; background:var(--border); border-radius:2px 2px 0 0;
+    font-size:0.45rem; color:var(--dim); text-align:center;
+    padding-top:4px; transition:all 0.1s; cursor:default;
+    letter-spacing:0;
+  }
+  .key-cell.black { height:20px; background:#1a1a2e; }
+  .key-cell.active { background:var(--purple); color:#fff; box-shadow:0 0 10px var(--purple); }
+  .key-cell.in-tune { background:var(--green); color:#000; box-shadow:0 0 10px var(--green); }
+
+  /* Pitch correction panel */
+  .autotune-panel {}
+  .scale-selector {
+    display:flex; flex-wrap:wrap; gap:4px; margin-bottom:10px;
+  }
+  .scale-btn {
+    font-family:'DM Mono',monospace;
+    font-size:0.55rem; letter-spacing:1px; text-transform:uppercase;
+    padding:4px 8px; background:transparent;
+    border:1px solid var(--border); color:var(--dim);
+    border-radius:2px; cursor:pointer; transition:all 0.15s;
+  }
+  .scale-btn.active {
+    border-color:var(--purple); color:var(--purple);
+    box-shadow:0 0 6px rgba(176,102,255,0.3);
+  }
+  .key-selector {
+    display:flex; flex-wrap:wrap; gap:3px; margin-bottom:10px;
+  }
+  .key-btn {
+    font-family:'DM Mono',monospace;
+    font-size:0.55rem; padding:3px 7px;
+    background:transparent; border:1px solid var(--border);
+    color:var(--dim); border-radius:2px; cursor:pointer; transition:all 0.15s;
+  }
+  .key-btn.active {
+    border-color:var(--purple); color:var(--purple);
+    background:rgba(176,102,255,0.1);
+  }
+
+  /* FX / action buttons */
+  .btn-row { display:flex; gap:6px; flex-wrap:wrap; justify-content:center; }
+  .btn {
+    font-family:'DM Mono',monospace;
+    font-size:0.6rem; letter-spacing:1px; text-transform:uppercase;
+    padding:8px 14px; background:transparent; border:1px solid;
+    border-radius:3px; cursor:pointer; transition:all 0.2s;
+  }
+  .btn-mic { border-color:var(--accent2); color:var(--accent2); }
+  .btn-mic.active, .btn-mic:hover { background:var(--accent2); color:#000; box-shadow:0 0 16px rgba(255,45,107,0.4); }
+  .btn-music { border-color:var(--accent); color:var(--accent); }
+  .btn-music.active, .btn-music:hover { background:var(--accent); color:#000; box-shadow:0 0 16px rgba(0,255,225,0.4); }
+  .btn-rec { border-color:var(--red); color:var(--red); }
+  .btn-rec.active, .btn-rec:hover { background:var(--red); color:#fff; }
+  .btn-tune { border-color:var(--purple); color:var(--purple); }
+  .btn-tune.active, .btn-tune:hover { background:var(--purple); color:#fff; box-shadow:0 0 16px rgba(176,102,255,0.4); }
+  .btn-fx { border-color:var(--border); color:var(--dim); }
+  .btn-fx.on { border-color:var(--accent2); color:var(--accent2); }
+
+  .file-label {
+    font-family:'DM Mono',monospace; font-size:0.6rem; letter-spacing:1px;
+    text-transform:uppercase; padding:8px 14px; background:transparent;
+    border:1px solid var(--accent); color:var(--accent); border-radius:3px;
+    cursor:pointer; transition:all 0.2s;
+  }
+  .file-label:hover { background:var(--accent); color:#000; }
+  .clip-name { font-size:0.6rem; color:var(--dim); letter-spacing:1px; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:200px; }
+
+  /* Mode toggle */
+  .mode-toggle {
+    display:flex; border:1px solid var(--border); border-radius:3px; overflow:hidden;
+  }
+  .mode-opt {
+    flex:1; font-family:'DM Mono',monospace; font-size:0.55rem;
+    letter-spacing:1px; text-transform:uppercase; padding:6px 4px;
+    background:transparent; border:none; color:var(--dim); cursor:pointer;
+    transition:all 0.15s; text-align:center;
+  }
+  .mode-opt.active { background:var(--purple); color:#fff; }
+
+  @keyframes clipflash { 0%{background:rgba(255,45,107,0.25)} 100%{background:transparent} }
+  .clip-flash { animation:clipflash 0.2s ease-out; }
+
+  /* Pitch history graph */
+  .pitch-graph { width:100%; height:60px; background:#000; border:1px solid var(--border); border-radius:3px; display:block; }
+
+  .row { display:flex; gap:10px; align-items:center; }
+  .col { display:flex; flex-direction:column; gap:6px; }
+  .spacer { height:8px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>KaraokeFlow <span style="font-size:0.9rem;color:var(--purple);letter-spacing:2px">+ AUTO-TUNE</span></h1>
+  <div class="status-pill">
+    <div class="dot" id="statusDot"></div>
+    <span id="statusText">STANDBY</span>
+  </div>
+</header>
+
+<div class="layout">
+
+  <!-- LEFT COL: Mic Channel + Pitch Correction -->
+  <div class="left-col">
+
+    <div class="panel">
+      <div class="panel-title mic">🎤 Microphone</div>
+      <div class="row" style="align-items:flex-end;gap:12px">
+        <div class="vu-v" id="micMeter"></div>
+        <div class="col" style="flex:1">
+          <div class="db-box" id="micDB">— dB</div>
+          <div class="fader-row">
+            <div class="fader-label">Volume</div>
+            <input type="range" class="sl-mic" id="micGain" min="0" max="2" step="0.01" value="1">
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-mic" id="micBtn">🎙 MIC</button>
+          </div>
+        </div>
+      </div>
+      <div class="spacer"></div>
+      <div class="btn-row">
+        <button class="btn btn-fx" id="fxReverb">Reverb</button>
+        <button class="btn btn-fx" id="fxEcho">Echo</button>
+      </div>
+    </div>
+
+    <div class="panel autotune-panel">
+      <div class="panel-title tune">🎵 Pitch Correction</div>
+
+      <div class="fader-row" style="margin-bottom:10px">
+        <div class="fader-label">Correction Strength</div>
+        <input type="range" class="sl-tune" id="corrStrength" min="0" max="1" step="0.01" value="0.7">
+        <div style="display:flex;justify-content:space-between;font-size:0.5rem;color:var(--dim)"><span>Natural</span><span>Robotic</span></div>
+      </div>
+
+      <div class="fader-row" style="margin-bottom:10px">
+        <div class="fader-label">Correction Speed</div>
+        <input type="range" class="sl-tune" id="corrSpeed" min="0.02" max="1" step="0.01" value="0.25">
+        <div style="display:flex;justify-content:space-between;font-size:0.5rem;color:var(--dim)"><span>Slow (smooth)</span><span>Fast (snap)</span></div>
+      </div>
+
+      <div class="fader-label" style="margin-bottom:5px">Mode</div>
+      <div class="mode-toggle" style="margin-bottom:10px">
+        <button class="mode-opt active" id="modeNatural">Natural</button>
+        <button class="mode-opt" id="modeHard">Hard Snap</button>
+        <button class="mode-opt" id="modeTpain">T-Pain</button>
+      </div>
+
+      <div class="fader-label" style="margin-bottom:5px">Key</div>
+      <div class="key-selector" id="keySelector"></div>
+
+      <div class="fader-label" style="margin-bottom:5px">Scale</div>
+      <div class="scale-selector" id="scaleSelector"></div>
+
+      <div class="btn-row">
+        <button class="btn btn-tune" id="tuneBtn">⚡ ENABLE</button>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- CENTER COL: Pitch Display + Output -->
+  <div class="center-col">
+
+    <!-- Big note display -->
+    <div class="panel note-display" id="notePanel">
+      <div style="font-size:0.6rem;letter-spacing:2px;color:var(--dim);margin-bottom:8px">DETECTED PITCH</div>
+      <div class="note-name" id="noteName">—</div>
+      <div class="note-octave" id="noteOctave"></div>
+      <div class="note-freq" id="noteFreq">— Hz</div>
+
+      <div class="tuning-meter">
+        <div class="tuning-track">
+          <div class="tuning-center"></div>
+          <div class="tuning-needle" id="tuningNeedle"></div>
+        </div>
+        <div class="tuning-labels"><span>♭ FLAT</span><span>IN TUNE</span><span>SHARP ♯</span></div>
+      </div>
+      <div class="cents-box" id="centsBox">— cents</div>
+
+      <div class="keyboard-strip" id="keyboardStrip"></div>
+    </div>
+
+    <!-- Pitch history graph -->
+    <div class="panel" style="padding:12px">
+      <div class="panel-title" style="color:var(--purple)">PITCH HISTORY</div>
+      <canvas class="pitch-graph" id="pitchGraph" width="600" height="60"></canvas>
+      <div style="display:flex;justify-content:space-between;font-size:0.5rem;color:var(--dim);margin-top:4px">
+        <span>RAW</span><span id="correctedLabel">CORRECTED</span>
+      </div>
+    </div>
+
+    <!-- Master Output -->
+    <div class="panel">
+      <div class="panel-title output">⚡ Master Output</div>
+      <div class="row" style="margin-bottom:8px;justify-content:space-between">
+        <span class="db-box" id="peakHold">PEAK — dB</span>
+        <div class="row" style="gap:8px">
+          <span style="font-size:0.6rem;color:var(--dim)">MASTER</span>
+          <input type="range" class="sl-master" id="masterGain" min="0" max="1.5" step="0.01" value="1" style="width:100px">
+        </div>
+        <span class="db-box" id="outDB">— dB</span>
+      </div>
+      <div style="font-size:0.5rem;color:var(--dim);margin-bottom:3px;letter-spacing:1px">L</div>
+      <div class="vu-h-row" id="outMeterL" style="margin-bottom:6px"></div>
+      <div style="font-size:0.5rem;color:var(--dim);margin-bottom:3px;letter-spacing:1px">R</div>
+      <div class="vu-h-row" id="outMeterR"></div>
+    </div>
+
+    <!-- Record + Lyrics -->
+    <div class="panel">
+      <div class="row" style="justify-content:space-between">
+        <button class="btn btn-rec" id="recBtn">⏺ REC</button>
+        <div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;letter-spacing:4px;color:var(--dim);text-align:center;flex:1" id="lyricsDisplay">SING YOUR HEART OUT</div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- RIGHT COL: Music Track -->
+  <div class="right-col">
+
+    <div class="panel">
+      <div class="panel-title music">🎵 Music Track</div>
+      <div class="row" style="align-items:flex-end;gap:12px">
+        <div class="vu-v" id="musicMeter"></div>
+        <div class="col" style="flex:1">
+          <div class="db-box" id="musicDB">— dB</div>
+          <div class="fader-row">
+            <div class="fader-label">Volume</div>
+            <input type="range" class="sl-music" id="musicGain" min="0" max="2" step="0.01" value="0.8">
+          </div>
+          <div class="fader-row">
+            <div class="fader-label">Bass</div>
+            <input type="range" id="bassEQ" min="-12" max="12" step="1" value="0" style="accent-color:var(--accent)">
+          </div>
+          <div class="fader-row">
+            <div class="fader-label">Treble</div>
+            <input type="range" id="trebleEQ" min="-12" max="12" step="1" value="0" style="accent-color:var(--accent)">
+          </div>
+        </div>
+      </div>
+      <div class="spacer"></div>
+      <div class="btn-row">
+        <label class="file-label" for="musicFile">📂 LOAD</label>
+        <input type="file" id="musicFile" accept="audio/*" style="display:none">
+        <button class="btn btn-music" id="musicBtn">▶ PLAY</button>
+      </div>
+      <div class="clip-name" id="clipName" style="margin-top:6px;text-align:center">no track loaded</div>
+    </div>
+
+    <!-- Pitch correction info -->
+    <div class="panel">
+      <div class="panel-title tune">CORRECTION STATUS</div>
+      <div class="col" style="gap:8px">
+        <div class="row" style="justify-content:space-between">
+          <span style="font-size:0.6rem;color:var(--dim)">Raw Pitch</span>
+          <span class="db-box" id="rawPitchBox">— Hz</span>
+        </div>
+        <div class="row" style="justify-content:space-between">
+          <span style="font-size:0.6rem;color:var(--dim)">Target Note</span>
+          <span class="db-box" id="targetNoteBox">—</span>
+        </div>
+        <div class="row" style="justify-content:space-between">
+          <span style="font-size:0.6rem;color:var(--dim)">Shift Applied</span>
+          <span class="db-box" id="shiftBox">— cents</span>
+        </div>
+        <div class="row" style="justify-content:space-between">
+          <span style="font-size:0.6rem;color:var(--dim)">Correction</span>
+          <span class="db-box" id="corrOnBox" style="color:var(--dim)">OFF</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ─── MUSICAL CONSTANTS ───────────────────────────────────────────────
+const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const SCALES = {
+  'Major':     [0,2,4,5,7,9,11],
+  'Minor':     [0,2,3,5,7,8,10],
+  'Pentatonic':[0,2,4,7,9],
+  'Blues':     [0,3,5,6,7,10],
+  'Chromatic': [0,1,2,3,4,5,6,7,8,9,10,11],
+};
+const KEYS = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+
+let selectedKey = 0; // semitone offset (0=C)
+let selectedScale = 'Major';
+let correctionMode = 'natural'; // natural | hard | tpain
+let tuneEnabled = false;
+let corrStrength = 0.7;
+let corrSpeed = 0.25;
+let currentPitchSmoothed = 0; // smoothed corrected pitch ratio
+
+// Build key/scale selectors
+const keySel = document.getElementById('keySelector');
+KEYS.forEach((k,i) => {
+  const b = document.createElement('button');
+  b.className = 'key-btn' + (i===0?' active':'');
+  b.textContent = k;
+  b.addEventListener('click', () => {
+    document.querySelectorAll('.key-btn').forEach(x=>x.classList.remove('active'));
+    b.classList.add('active');
+    selectedKey = i;
+  });
+  keySel.appendChild(b);
+});
+
+const scaleSel = document.getElementById('scaleSelector');
+Object.keys(SCALES).forEach(s => {
+  const b = document.createElement('button');
+  b.className = 'scale-btn' + (s==='Major'?' active':'');
+  b.textContent = s;
+  b.addEventListener('click', () => {
+    document.querySelectorAll('.scale-btn').forEach(x=>x.classList.remove('active'));
+    b.classList.add('active');
+    selectedScale = s;
+  });
+  scaleSel.appendChild(b);
+});
+
+// Build keyboard strip (one octave C-B)
+const kbStrip = document.getElementById('keyboardStrip');
+const BLACK = [1,3,6,8,10]; // indices that are black keys
+NOTE_NAMES.forEach((n,i) => {
+  const c = document.createElement('div');
+  c.className = 'key-cell' + (BLACK.includes(i)?' black':'');
+  c.textContent = n;
+  c.id = 'key_' + i;
+  kbStrip.appendChild(c);
+});
+
+// Mode buttons
+['modeNatural','modeHard','modeTpain'].forEach(id => {
+  document.getElementById(id).addEventListener('click', function() {
+    document.querySelectorAll('.mode-opt').forEach(x=>x.classList.remove('active'));
+    this.classList.add('active');
+    correctionMode = id === 'modeNatural' ? 'natural' : id === 'modeHard' ? 'hard' : 'tpain';
+  });
+});
+
+document.getElementById('corrStrength').addEventListener('input', e => corrStrength = parseFloat(e.target.value));
+document.getElementById('corrSpeed').addEventListener('input', e => corrSpeed = parseFloat(e.target.value));
+
+document.getElementById('tuneBtn').addEventListener('click', function() {
+  tuneEnabled = !tuneEnabled;
+  this.classList.toggle('active', tuneEnabled);
+  this.textContent = tuneEnabled ? '⚡ ENABLED' : '⚡ ENABLE';
+  document.getElementById('corrOnBox').textContent = tuneEnabled ? 'ON' : 'OFF';
+  document.getElementById('corrOnBox').style.color = tuneEnabled ? 'var(--green)' : 'var(--dim)';
+  if (tuneEnabled) {
+    document.getElementById('statusDot').className = 'dot tuning';
+    document.getElementById('statusText').textContent = 'TUNING';
+  }
+});
+
+// ─── PITCH DETECTION (Autocorrelation) ───────────────────────────────
+function detectPitch(buffer, sampleRate) {
+  const SIZE = buffer.length;
+  const MAX_SAMPLES = Math.floor(SIZE / 2);
+  let best_offset = -1;
+  let best_correlation = 0;
+  let rms = 0;
+
+  for (let i = 0; i < SIZE; i++) rms += buffer[i] * buffer[i];
+  rms = Math.sqrt(rms / SIZE);
+  if (rms < 0.01) return -1; // silence
+
+  let correlations = new Float32Array(MAX_SAMPLES);
+  let found = false;
+  let last_correlation = 1;
+
+  for (let offset = 1; offset < MAX_SAMPLES; offset++) {
+    let correlation = 0;
+    for (let i = 0; i < MAX_SAMPLES; i++) {
+      correlation += Math.abs((buffer[i]) - (buffer[i + offset]));
+    }
+    correlation = 1 - (correlation / MAX_SAMPLES);
+    correlations[offset] = correlation;
+    if (correlation > 0.9 && correlation > last_correlation) {
+      found = true;
+      if (correlation > best_correlation) {
+        best_correlation = correlation;
+        best_offset = offset;
+      }
+    } else if (found) {
+      break;
+    }
+    last_correlation = correlation;
+  }
+
+  if (best_offset === -1) return -1;
+
+  // Parabolic interpolation for sub-sample accuracy
+  let shift = 0;
+  if (best_offset > 0 && best_offset < MAX_SAMPLES - 1) {
+    const x1 = correlations[best_offset - 1];
+    const x2 = correlations[best_offset];
+    const x3 = correlations[best_offset + 1];
+    shift = (x3 - x1) / (2 * (2 * x2 - x1 - x3));
+  }
+
+  return sampleRate / (best_offset + shift);
+}
+
+function freqToNote(freq) {
+  if (freq <= 0) return null;
+  const noteNum = 12 * (Math.log2(freq / 440)) + 69;
+  const rounded = Math.round(noteNum);
+  const cents = Math.round((noteNum - rounded) * 100);
+  const noteIdx = ((rounded % 12) + 12) % 12;
+  const octave = Math.floor(rounded / 12) - 1;
+  return { note: NOTE_NAMES[noteIdx], noteIdx, octave, cents, noteNum, midiNote: rounded };
+}
+
+function getTargetFreq(inputFreq) {
+  if (inputFreq <= 0) return inputFreq;
+  const noteNum = 12 * (Math.log2(inputFreq / 440)) + 69;
+  const noteIdx = ((Math.round(noteNum) % 12) + 12) % 12;
+
+  // Find nearest note in scale+key
+  const scaleNotes = SCALES[selectedScale].map(s => (s + selectedKey) % 12);
+  let minDist = Infinity;
+  let targetNote = noteIdx;
+
+  for (let oct = -1; oct <= 1; oct++) {
+    for (const sn of scaleNotes) {
+      const candidate = Math.round(noteNum / 12) * 12 + sn + (oct * 12);
+      const dist = Math.abs(candidate - noteNum);
+      if (dist < minDist) {
+        minDist = dist;
+        targetNote = candidate;
+      }
+    }
+  }
+
+  return 440 * Math.pow(2, (targetNote - 69) / 12);
+}
+
+// ─── METER BUILDERS ───────────────────────────────────────────────────
+const NUM_SEGS_V = 20;
+function buildVertMeter(id) {
+  const w = document.getElementById(id); w.innerHTML = '';
+  for (let i = 0; i < NUM_SEGS_V; i++) {
+    const bar = document.createElement('div'); bar.className = 'vu-bar-wrap';
+    const seg = document.createElement('div'); seg.className = 'vu-seg';
+    bar.appendChild(seg); w.appendChild(bar);
+  }
+}
+function buildHorizMeter(id, n=40) {
+  const w = document.getElementById(id); w.innerHTML = '';
+  for (let i=0;i<n;i++) {
+    const s = document.createElement('div'); s.className='vu-h-seg'; w.appendChild(s);
+  }
+}
+function updateVertMeter(id, level) {
+  const segs = document.getElementById(id).querySelectorAll('.vu-seg');
+  const active = Math.round(level * NUM_SEGS_V);
+  segs.forEach((s,i) => {
+    if (i < active) {
+      s.style.background = i >= NUM_SEGS_V-3 ? 'var(--red)' : i >= NUM_SEGS_V-6 ? 'var(--yellow)' : 'var(--green)';
+    } else { s.style.background = 'var(--border)'; }
+  });
+}
+function updateHorizMeter(id, level, n=40) {
+  const segs = document.getElementById(id).querySelectorAll('.vu-h-seg');
+  const active = Math.round(level * n);
+  segs.forEach((s,i) => {
+    if (i < active) {
+      s.style.background = i >= n-4 ? 'var(--red)' : i >= n-10 ? 'var(--yellow)' : 'var(--green)';
+    } else { s.style.background = 'var(--border)'; }
+  });
+}
+function ampToDb(a) { return a < 0.00001 ? -Infinity : 20*Math.log10(a); }
+function dbDisplay(db) { return !isFinite(db) ? '—∞ dB' : (db>=0?'+':'')+db.toFixed(1)+' dB'; }
+function getRMS(analyser, data) {
+  analyser.getByteTimeDomainData(data);
+  let s=0;
+  for (let i=0;i<data.length;i++) { const v=(data[i]-128)/128; s+=v*v; }
+  return Math.sqrt(s/data.length);
+}
+
+// ─── AUDIO ENGINE ─────────────────────────────────────────────────────
+let audioCtx, micStream, micSource, micGainNode, micAnalyser;
+let musicAudioEl, musicGainNode, musicAnalyser, musicBuffer;
+let masterGainNode, masterAnalyser;
+let reverbNode, echoNode;
+let reverbOn=false, echoOn=false;
+let micActive=false, musicPlaying=false;
+let recorder, recordedChunks=[];
+let peakDb=-Infinity, peakTimer=null;
+let pitchAnalyser, pitchBuffer;
+let scriptProcessor = null;
+
+async function initAudio() {
+  if (audioCtx) return;
+  audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+  masterGainNode = audioCtx.createGain();
+  masterGainNode.gain.value = parseFloat(document.getElementById('masterGain').value);
+  masterAnalyser = audioCtx.createAnalyser();
+  masterAnalyser.fftSize = 256;
+  masterGainNode.connect(masterAnalyser);
+  masterAnalyser.connect(audioCtx.destination);
+
+  // Reverb IR
+  reverbNode = audioCtx.createConvolver();
+  const rl = audioCtx.sampleRate*2.5;
+  const rb = audioCtx.createBuffer(2,rl,audioCtx.sampleRate);
+  for (let c=0;c<2;c++) {
+    const d=rb.getChannelData(c);
+    for (let i=0;i<rl;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/rl,2.5);
+  }
+  reverbNode.buffer = rb;
+  const reverbGain = audioCtx.createGain(); reverbGain.gain.value = 0.4;
+  reverbNode.connect(reverbGain);
+
+  // Echo
+  echoNode = audioCtx.createDelay(1.0);
+  echoNode.delayTime.value = 0.35;
+  const echoFB = audioCtx.createGain(); echoFB.gain.value = 0.4;
+  echoNode.connect(echoFB); echoFB.connect(echoNode);
+}
+
+async function startMic() {
+  await initAudio();
+  if (audioCtx.state==='suspended') audioCtx.resume();
+  micStream = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
+  micSource = audioCtx.createMediaStreamSource(micStream);
+  micGainNode = audioCtx.createGain();
+  micGainNode.gain.value = parseFloat(document.getElementById('micGain').value);
+  micAnalyser = audioCtx.createAnalyser();
+  micAnalyser.fftSize = 256;
+
+  // Pitch analyser (larger buffer for accuracy)
+  pitchAnalyser = audioCtx.createAnalyser();
+  pitchAnalyser.fftSize = 2048;
+  pitchBuffer = new Float32Array(pitchAnalyser.fftSize);
+
+  micSource.connect(micGainNode);
+  micGainNode.connect(pitchAnalyser);
+  micGainNode.connect(micAnalyser);
+
+  // Build pitch-shifted path
+  // We use a ScriptProcessorNode for real-time pitch shift simulation
+  // (true pitch shifting requires AudioWorklet; this approximates via playback rate)
+  scriptProcessor = audioCtx.createScriptProcessor(2048, 1, 1);
+  let pitchRatio = 1.0;
+  let inputBuffer = new Float32Array(4096);
+  let outputBuffer = new Float32Array(4096);
+  let inputWritePos = 0;
+
+  scriptProcessor.onaudioprocess = (e) => {
+    const input = e.inputBuffer.getChannelData(0);
+    const output = e.outputBuffer.getChannelData(0);
+
+    // Detect pitch
+    const freq = detectPitch(input, audioCtx.sampleRate);
+    if (freq > 60 && freq < 1200 && tuneEnabled) {
+      const targetFreq = getTargetFreq(freq);
+      const rawRatio = targetFreq / freq;
+      // Apply strength
+      const appliedRatio = 1 + (rawRatio - 1) * corrStrength;
+      // Smooth based on speed
+      currentPitchSmoothed += (appliedRatio - currentPitchSmoothed) * corrSpeed;
+
+      // T-Pain mode: snap hard + quantize
+      if (correctionMode === 'tpain') {
+        pitchRatio = rawRatio;
+      } else if (correctionMode === 'hard') {
+        pitchRatio = currentPitchSmoothed > 0.98 ? rawRatio : currentPitchSmoothed;
+      } else {
+        pitchRatio = currentPitchSmoothed;
+      }
+
+      // Simple pitch shift: resample in buffer
+      for (let i = 0; i < output.length; i++) {
+        const srcIdx = i * pitchRatio;
+        const idx0 = Math.floor(srcIdx) % input.length;
+        const idx1 = (idx0 + 1) % input.length;
+        const frac = srcIdx - Math.floor(srcIdx);
+        output[i] = input[idx0] * (1-frac) + input[idx1] * frac;
+      }
+    } else {
+      // Pass through
+      for (let i = 0; i < output.length; i++) output[i] = input[i];
+      currentPitchSmoothed = 1.0;
+    }
+  };
+
+  micGainNode.connect(scriptProcessor);
+
+  let chain = scriptProcessor;
+  if (reverbOn) { chain.connect(reverbNode); chain = reverbNode; }
+  if (echoOn) { chain.connect(echoNode); chain = echoNode; }
+  chain.connect(masterGainNode);
+
+  micActive = true;
+  document.getElementById('micBtn').classList.add('active');
+  document.getElementById('statusDot').className = 'dot live';
+  document.getElementById('statusText').textContent = 'LIVE';
+}
+
+function stopMic() {
+  if (micStream) { micStream.getTracks().forEach(t=>t.stop()); micStream=null; }
+  if (micSource) { try{micSource.disconnect();}catch(e){} micSource=null; }
+  if (scriptProcessor) { try{scriptProcessor.disconnect();}catch(e){} scriptProcessor=null; }
+  micActive=false;
+  document.getElementById('micBtn').classList.remove('active');
+  if (!musicPlaying) {
+    document.getElementById('statusDot').className='dot';
+    document.getElementById('statusText').textContent='STANDBY';
+  }
+}
+
+async function loadMusicFile(file) {
+  await initAudio();
+  document.getElementById('clipName').textContent = file.name;
+  const buf = await file.arrayBuffer();
+  musicBuffer = await audioCtx.decodeAudioData(buf);
+}
+
+function playMusic() {
+  if (!musicBuffer||!audioCtx) return;
+  musicAudioEl = audioCtx.createBufferSource();
+  musicAudioEl.buffer = musicBuffer;
+  musicAudioEl.loop = true;
+  musicGainNode = audioCtx.createGain();
+  musicGainNode.gain.value = parseFloat(document.getElementById('musicGain').value);
+  musicAnalyser = audioCtx.createAnalyser();
+  musicAnalyser.fftSize = 256;
+
+  const bass = audioCtx.createBiquadFilter();
+  bass.type='lowshelf'; bass.frequency.value=200;
+  bass.gain.value = parseFloat(document.getElementById('bassEQ').value);
+  const treble = audioCtx.createBiquadFilter();
+  treble.type='highshelf'; treble.frequency.value=4000;
+  treble.gain.value = parseFloat(document.getElementById('trebleEQ').value);
+
+  musicAudioEl.connect(bass); bass.connect(treble);
+  treble.connect(musicGainNode);
+  musicGainNode.connect(musicAnalyser);
+  musicAnalyser.connect(masterGainNode);
+  musicAudioEl.start();
+  musicPlaying=true;
+  document.getElementById('musicBtn').textContent='⏹ STOP';
+  document.getElementById('musicBtn').classList.add('active');
+  document.getElementById('statusDot').className='dot ready';
+  document.getElementById('statusText').textContent='PLAYING';
+}
+
+function stopMusic() {
+  if (musicAudioEl) { try{musicAudioEl.stop();}catch(e){} musicAudioEl=null; }
+  musicPlaying=false;
+  document.getElementById('musicBtn').textContent='▶ PLAY';
+  document.getElementById('musicBtn').classList.remove('active');
+  if (!micActive) {
+    document.getElementById('statusDot').className='dot';
+    document.getElementById('statusText').textContent='STANDBY';
+  }
+}
+
+// ─── CONTROLS ─────────────────────────────────────────────────────────
+document.getElementById('micGain').addEventListener('input', e => { if(micGainNode) micGainNode.gain.value=parseFloat(e.target.value); });
+document.getElementById('musicGain').addEventListener('input', e => { if(musicGainNode) musicGainNode.gain.value=parseFloat(e.target.value); });
+document.getElementById('masterGain').addEventListener('input', e => { if(masterGainNode) masterGainNode.gain.value=parseFloat(e.target.value); });
+document.getElementById('fxReverb').addEventListener('click', function() { reverbOn=!reverbOn; this.classList.toggle('on',reverbOn); });
+document.getElementById('fxEcho').addEventListener('click', function() { echoOn=!echoOn; this.classList.toggle('on',echoOn); });
+document.getElementById('micBtn').addEventListener('click', async () => {
+  if (!micActive) { try { await startMic(); } catch(e) { alert('Mic access denied: '+e.message); } }
+  else stopMic();
+});
+document.getElementById('musicBtn').addEventListener('click', () => { if(!musicPlaying) playMusic(); else stopMusic(); });
+document.getElementById('musicFile').addEventListener('change', e => { if(e.target.files[0]) loadMusicFile(e.target.files[0]); });
+document.getElementById('recBtn').addEventListener('click', async () => {
+  await initAudio();
+  if (!recorder||recorder.state==='inactive') {
+    const dest = audioCtx.createMediaStreamDestination();
+    masterGainNode.connect(dest);
+    recorder = new MediaRecorder(dest.stream);
+    recordedChunks=[];
+    recorder.ondataavailable = e => { if(e.data.size>0) recordedChunks.push(e.data); };
+    recorder.onstop = () => {
+      const blob = new Blob(recordedChunks,{type:'audio/webm'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href=url; a.download='karaoke-mix.webm'; a.click();
+    };
+    recorder.start();
+    document.getElementById('recBtn').classList.add('active');
+  } else {
+    recorder.stop();
+    document.getElementById('recBtn').classList.remove('active');
+  }
+});
+
+// ─── PITCH GRAPH ─────────────────────────────────────────────────────
+const canvas = document.getElementById('pitchGraph');
+const ctx2d = canvas.getContext('2d');
+const GRAPH_LEN = 200;
+let rawHistory = new Array(GRAPH_LEN).fill(null);
+let corrHistory = new Array(GRAPH_LEN).fill(null);
+const PITCH_MIN = 80, PITCH_MAX = 1000;
+
+function drawPitchGraph() {
+  ctx2d.clearRect(0,0,canvas.width,canvas.height);
+  ctx2d.fillStyle='#000'; ctx2d.fillRect(0,0,canvas.width,canvas.height);
+
+  // Grid lines at C notes
+  ctx2d.strokeStyle='rgba(255,255,255,0.05)'; ctx2d.lineWidth=1;
+  [130.81,261.63,523.25].forEach(f => {
+    const y = canvas.height - ((Math.log2(f/PITCH_MIN)/Math.log2(PITCH_MAX/PITCH_MIN))*canvas.height);
+    ctx2d.beginPath(); ctx2d.moveTo(0,y); ctx2d.lineTo(canvas.width,y); ctx2d.stroke();
+  });
+
+  const drawLine = (hist, color) => {
+    ctx2d.strokeStyle=color; ctx2d.lineWidth=1.5;
+    ctx2d.beginPath();
+    let started=false;
+    hist.forEach((v,i) => {
+      if (v===null) { started=false; return; }
+      const x = (i/GRAPH_LEN)*canvas.width;
+      const norm = Math.max(0,Math.min(1,(Math.log2(v/PITCH_MIN)/Math.log2(PITCH_MAX/PITCH_MIN))));
+      const y = canvas.height - norm*canvas.height;
+      if (!started) { ctx2d.moveTo(x,y); started=true; } else ctx2d.lineTo(x,y);
+    });
+    ctx2d.stroke();
+  };
+
+  drawLine(rawHistory,'rgba(255,45,107,0.5)');
+  drawLine(corrHistory,'rgba(176,102,255,0.9)');
+}
+
+// ─── ANIMATION LOOP ───────────────────────────────────────────────────
+const micData = new Uint8Array(128);
+const musicData = new Uint8Array(128);
+const masterData = new Uint8Array(128);
+let lastPitchFreq = 0;
+let frameCount = 0;
+
+const demoLyrics = ['SING YOUR HEART OUT','🎤 YOUR VOICE — YOUR STAGE','LOAD TRACK & START SINGING','TURN IT UP 🔊'];
+let lyricsIdx=0;
+setInterval(()=>{ if(!musicPlaying){lyricsIdx=(lyricsIdx+1)%demoLyrics.length; document.getElementById('lyricsDisplay').textContent=demoLyrics[lyricsIdx];} },3500);
+
+function animate() {
+  requestAnimationFrame(animate);
+  frameCount++;
+
+  // ── Mic meter
+  let micLevel=0;
+  if (micAnalyser) micLevel=Math.min(getRMS(micAnalyser,micData)*4,1);
+  updateVertMeter('micMeter',micLevel);
+  document.getElementById('micDB').textContent=dbDisplay(ampToDb(micLevel));
+
+  // ── Music meter
+  let musicLevel=0;
+  if (musicAnalyser) musicLevel=Math.min(getRMS(musicAnalyser,musicData)*4,1);
+  updateVertMeter('musicMeter',musicLevel);
+  document.getElementById('musicDB').textContent=dbDisplay(ampToDb(musicLevel));
+
+  // ── Master
+  let masterLevel=0;
+  if (masterAnalyser) masterLevel=Math.min(getRMS(masterAnalyser,masterData)*4,1);
+  updateHorizMeter('outMeterL',masterLevel);
+  updateHorizMeter('outMeterR',masterLevel*(0.88+Math.random()*0.12));
+  const masterDb=ampToDb(masterLevel);
+  document.getElementById('outDB').textContent=dbDisplay(masterDb);
+  if (isFinite(masterDb)&&masterDb>peakDb) {
+    peakDb=masterDb; clearTimeout(peakTimer);
+    peakTimer=setTimeout(()=>{peakDb=-Infinity;},2500);
+  }
+  document.getElementById('peakHold').textContent='PEAK '+dbDisplay(peakDb);
+  if (masterLevel>0.95) { document.body.classList.add('clip-flash'); setTimeout(()=>document.body.classList.remove('clip-flash'),200); }
+
+  // ── Pitch detection (every 3 frames for perf)
+  if (pitchAnalyser && frameCount % 3 === 0) {
+    pitchAnalyser.getFloatTimeDomainData(pitchBuffer);
+    const freq = detectPitch(pitchBuffer, audioCtx.sampleRate);
+
+    // Shift history
+    rawHistory.shift(); corrHistory.shift();
+
+    if (freq > 60 && freq < 1200) {
+      lastPitchFreq = freq;
+      const info = freqToNote(freq);
+      const targetFreq = getTargetFreq(freq);
+      const targetInfo = freqToNote(targetFreq);
+      const centsDev = info ? info.cents : 0;
+      const shiftCents = tuneEnabled ? Math.round((Math.log2(targetFreq/freq))*1200) : 0;
+
+      // Update note display
+      const noteName = document.getElementById('noteName');
+      noteName.textContent = info ? info.note : '—';
+      document.getElementById('noteOctave').textContent = info ? 'Octave ' + info.octave : '';
+      document.getElementById('noteFreq').textContent = freq.toFixed(1) + ' Hz';
+      document.getElementById('rawPitchBox').textContent = freq.toFixed(1)+' Hz';
+      document.getElementById('targetNoteBox').textContent = targetInfo ? targetInfo.note+targetInfo.octave : '—';
+      document.getElementById('shiftBox').textContent = (shiftCents>=0?'+':'')+shiftCents+' ¢';
+
+      // Needle position
+      const needlePct = 50 + (centsDev / 50) * 50; // -50..+50 cents → 0..100%
+      const needle = document.getElementById('tuningNeedle');
+      needle.style.left = Math.max(2,Math.min(98,needlePct))+'%';
+      document.getElementById('centsBox').textContent = (centsDev>=0?'+':'')+centsDev+' cents';
+
+      const tuneClass = Math.abs(centsDev)<8 ? 'in-tune' : centsDev>0 ? 'sharp' : 'flat';
+      needle.className = 'tuning-needle ' + tuneClass;
+      noteName.className = 'note-name ' + tuneClass;
+
+      // Keyboard highlight
+      NOTE_NAMES.forEach((_,i) => {
+        const el = document.getElementById('key_'+i);
+        if (!el) return;
+        el.classList.remove('active','in-tune');
+        if (info && i===info.noteIdx) el.classList.add(tuneClass==='in-tune'?'in-tune':'active');
+      });
+
+      rawHistory.push(freq);
+      corrHistory.push(tuneEnabled ? targetFreq : freq);
+    } else {
+      document.getElementById('noteName').textContent='—';
+      document.getElementById('noteName').className='note-name';
+      document.getElementById('noteFreq').textContent='— Hz';
+      document.getElementById('rawPitchBox').textContent='— Hz';
+      document.getElementById('tuningNeedle').style.left='50%';
+      document.getElementById('tuningNeedle').className='tuning-needle';
+      document.getElementById('centsBox').textContent='— cents';
+      NOTE_NAMES.forEach((_,i) => { const el=document.getElementById('key_'+i); if(el){el.classList.remove('active','in-tune');} });
+      rawHistory.push(null);
+      corrHistory.push(null);
+    }
+
+    drawPitchGraph();
+  }
+}
+
+// ─── INIT ─────────────────────────────────────────────────────────────
+buildVertMeter('micMeter');
+buildVertMeter('musicMeter');
+buildHorizMeter('outMeterL',40);
+buildHorizMeter('outMeterR',40);
+animate();
+</script>
+</body>
+</html>
